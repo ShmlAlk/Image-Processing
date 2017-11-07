@@ -1,0 +1,147 @@
+Im=imread('sh1.jpg');
+figure
+imshow(Im);
+title('Original Image');
+
+%%Convert to gray
+I=rgb2gray(Im);
+
+%%Apply Gaussian filter for binarization and shadow elimination
+g = fspecial('gaussian', 85, 10);
+fim = filter2(g, I);
+bw = I < 0.92.*fim;
+
+%%Enhance the binary image
+
+%Clean salt and pepper
+bwop=bwareaopen(bw,4000,8);
+
+%Dilate the image
+se=strel('square',10);
+bwdil=imclose(bwop,se);
+
+% %Close gaps in boundaries
+% bw2=bwmorph(bwdil,'close',3);
+% 
+% %Fill inner pixels
+% bw5=bwmorph(bw2,'fill',3);
+
+%Fill the image
+bwfil=imfill(bwdil,'holes');
+
+%Blur the image for smooth boundaries
+g1 = fspecial('gaussian', 13, 2);
+filimg = filter2(g1, bwfil);
+
+
+
+%%// Get bounding box stats
+stats = regionprops(bwlabel(filimg),'Area','BoundingBox');
+Boxes=cat(1,stats.BoundingBox);
+ArBox=Boxes(:,3).*Boxes(:,4);
+% display(Boxes);
+% display(ArBox);
+allAreas =cat(1,stats.Area);
+% display(allAreas);
+
+%%Area division matrix
+Diff=ArBox./allAreas;
+% display(Diff);
+
+
+% Construct cells for Corners and Text position
+Crn=cell(size(Boxes,1));
+txtcell=cell(size(Boxes,1));
+
+
+%%// Placeholder to store the final result
+maskm = false(size(filimg,1),size(filimg,2));
+
+for k1=1:size(Boxes,1)
+%// Initialize a mask representing each bounding box
+    mask1 = false(size(filimg,1),size(filimg,2));
+
+    %%// Get the coordinates of the boxes
+    starty = round(Boxes(k1,2));
+    stopy = starty+round(Boxes(k1,4))-1;
+    startx = round(Boxes(k1,1));
+    stopx = startx+round(Boxes(k1,3))-1;
+
+    %%// Finaly create the mask
+    mask1(starty:stopy,startx:stopx) = true;
+%     maskm = maskm + imdilate(edge(mask1,'sobel'),strel('disk',2));
+    maskm = maskm + edge(mask1,'sobel');
+    
+    %Text
+    position=[startx+10 starty-25];
+    txtcell{k1}=position;
+    
+    
+end
+
+%Obtain masked binary image
+mymask=maskm+filimg;
+
+
+%Detect corners and recognize figures due Area(Rhomb vs Rect&Square),
+%Width&Height of Bbox(Rect vs Square)
+for k1=1:size(Boxes,1)
+    %ROI for Corner detection
+    p1=round(Boxes(k1,1));
+    p2=round(Boxes(k1,2));
+    p3=round(Boxes(k1,3));
+    p4=round(Boxes(k1,4));
+    corners = detectHarrisFeatures(filimg,'ROI',[p1, p2, p3, p4]);
+    Crn{k1}=corners.selectStrongest(50);
+    
+    %Count the corners
+    Ccnt=corners.Count;
+    
+    %Recognize shapes and insert text
+    
+    if (corners.Count>10 | corners.Count<3)  % Ignore dumpy corner points
+        Crn{k1}=0;
+        Ccnt=0;
+    end
+    
+        if Ccnt==0
+           text_str=['Circle'];
+        elseif Ccnt==3
+               text_str=['Triangle'];
+        elseif Ccnt==4
+            if Diff(k1,1)<1.15
+                if Boxes(k1,4)/Boxes(k1,3)<1.1
+                   text_str=['Square'];
+                elseif Boxes(k1,4)/Boxes(k1,3)>1
+                       text_str=['Rectangle'];
+                end
+            elseif Diff(k1,1)>1.10
+                   text_str=['Rhomb'];
+            end        
+        elseif Ccnt==5
+            text_str=['Pentagon'];
+        elseif Ccnt==6
+            text_str=['Hexagon'];
+        elseif Ccnt==10
+            text_str=['Star'];
+        else
+            text_str=['Unknown'];
+        end
+    
+    Txt = insertText(mymask,txtcell{k1},text_str,'FontSize',15,'BoxColor',...
+    'white','BoxOpacity',0,'TextColor','white');
+
+    mymask=Txt; %Save the texted mask for future texts
+end
+
+
+
+figure
+imshow(mymask)
+hold on;
+for k=1:size(Boxes,1)
+    plot(Crn{k});
+end
+axis on
+title('Recognized Shapes');
+
